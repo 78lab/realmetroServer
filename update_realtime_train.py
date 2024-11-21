@@ -24,7 +24,8 @@ REALMETRO_BASE_URL = 'http://swopenapi.seoul.go.kr'
 client = AsyncIOMotorClient(MONGODB_URI, server_api=ServerApi('1'))
 
 db = client['test']  # 데이터베이스 이름
-collection = db['trains']  # 컬렉션 이름
+train_collection = db['trains']  # 컬렉션 이름
+timetable_collection = db['timetables']  # 컬렉션 이름
 
 upDown = "1"  # 상행
 realtimePositions = []
@@ -61,31 +62,40 @@ async def fetch_realtime_train_data():
             for item in data['realtimePositionList']:
                 trainNo = item['trainNo']
                 # statnTnm = item['statnTnm']
-                # statnId = item['statnId']
-                
+                statnId = item['statnId']
+                #1-9호선 뒤 3자리 코드
+                frCode = statnId[7:10]
                 # statnNm = item['statnNm']
-                # recptnDt = item['recptnDt']
+                recptnDt = item['recptnDt']
                 # updnLine = item['updnLine']
-                # trainSttus = item['trainSttus']
+                trainSttus = item['trainSttus']
                 # directAt = item['directAt']
                 # lstcarAt = item['lstcarAt']
-                print(f"{trainNo} realtimePositionList item:{item}")
+                
 
+                train_delay = await cal_train_delay_async(frCode,trainNo,recptnDt,trainSttus)
+                print(f"trainNo:{trainNo} statnId:{statnId} FR_CODE:{frCode} train_delay:{train_delay} trainSttus:{trainSttus}")
 
                 filter_key = {
-                    "TRAIN_NO": item['trainNo']
+                    "TRAIN_NO": trainNo
                 }
+
+                item['TRAIN_NO'] = trainNo
+                item['delay'] = train_delay
                 
                 update_data = {"$set": item}
-                # print(update_data, len(rows))
-                # 중복 시 업데이트, 없을 시 삽입
                 operations.append(UpdateOne(filter_key, update_data, upsert=True))
+                # filter_key = {
+                #     "TRAIN_NO": trainNo,
+                #     "FR_CODE": frCode,
+                # }
+                # update_data = {"$set": {'recptnDt':recptnDt,'trainSttus':trainSttus}}
+                # operations.append(UpdateOne(filter_key, update_data))
                 
-
-
             # MongoDB에 대량 요청 실행
             if len(operations) > 0:
-                result = await collection.bulk_write(operations)
+                result = await train_collection.bulk_write(operations)
+                # result = await timetable_collection.bulk_write(operations)
                 print(f"{trainNo} Inserted: {result.upserted_count}, Updated: {result.modified_count}")
 
 
@@ -126,7 +136,62 @@ async def fetch_realtime_train_data():
         return None
 
 
+async def cal_train_delay_async(frCode, trainNo, recptnDt, train_stat):
+    print(f"\n\n\ncal_delay_async...frCode:{frCode} trainNo:{trainNo} recptnDt:{recptnDt} train_stat: {train_stat}") 
+    train_delay = 0
+    document = await find_timetable_async(frCode, trainNo)
 
+
+    if document:
+        print(f"ARRIVETIME: {document['ARRIVETIME']}, LEFTTIME: {document['LEFTTIME']}")
+        if document['ARRIVETIME'] == "00:00:00" or document['LEFTTIME'] == "00:00:00":
+            return None
+
+        current_time = datetime.now().replace(microsecond=0)
+        today = current_time.date()  # 오늘 날짜
+
+        recptntime = datetime.strptime(recptnDt, "%Y-%m-%d %H:%M:%S")
+
+        arrivetime = datetime.combine(today, datetime.strptime(document["ARRIVETIME"], "%H:%M:%S").time())
+        lefttime = datetime.combine(today, datetime.strptime(document["LEFTTIME"], "%H:%M:%S").time())
+
+        print(f"현재 시간: {current_time} trainNo: {trainNo} train_stat: {train_stat}")
+        arrivetime_diff = (arrivetime - current_time).total_seconds()
+        lefttime_diff = (lefttime - current_time).total_seconds()
+
+        train_delay_arrivetime = (recptntime - arrivetime).total_seconds()
+        train_delay_lefttime = (recptntime - lefttime).total_seconds()
+        print(f"train_delay arrivetime: {train_delay_arrivetime} lefttime: {train_delay_lefttime}")
+        print(f"curtime arrivetime: {arrivetime_diff} lefttime: {lefttime_diff}")
+
+        if train_stat == "0":
+            # train_delay = train_delay_arrivetime + 60
+            print("train_stat 0 skip")
+        elif train_stat == "1":
+            train_delay = train_delay_arrivetime
+        elif train_stat == "2":
+            print("train_stat 2 skip")
+            # train_delay = train_delay_lefttime
+
+        # if arrivetime_diff > 0:
+        #     a_minutes, a_seconds = divmod(int(arrivetime_diff), 60)
+        #     print(f"{inout_tag}:{fr_code_value} {train_no}열차 {a_minutes}분 {a_seconds}초 후 도착")
+        # else:
+        #     l_minutes, l_seconds = divmod(int(lefttime_diff), 60)
+        #     print(f"{inout_tag}:{fr_code_value} {train_no}열차 {l_seconds}초 후 출발")
+    
+        return train_delay
+    else:
+        return None
+
+
+
+async def find_timetable_async(frCode, trainNo):
+    # current_time = datetime.now().strftime("%H:%M:%S")
+    query = { "FR_CODE": frCode, "TRAIN_NO": trainNo}
+    # print(query)
+    result = await timetable_collection.find_one(query)
+    return result
 # 특정 FR_CODE 값을 가진 데이터를 찾는 비동기 함수
 
 # 특정 조건을 가진 데이터를 찾는 비동기 함수
@@ -199,14 +264,19 @@ async def cal_time_diff_async(fr_code_value, updn):
         return None, None
 
 # fr_code_list = ['804','805','806','807','808','809','810','811','812','813','814','815','816','817','818','819','820','821','822','823','824','825','826','827']
-fr_code_list = ['814','815','816','817','818','819','820','821','822','823','824','825','826','827']
+# fr_code_list = ['814','815','816','817','818','819','820','821','822','823','824','825','826','827']
 
 # 예제 사용
 async def main():
     print("Starting async main...")
-    updn = "2"
+    # updn = "2"
     cnt = 0
-    while cnt < 10:
+    while cnt < 400:
+
+        # doc = await find_timetable_async("824", "8162")
+        # print(doc['ARRIVETIME'])
+        # print(doc['LEFTTIME'])
+        # await cal_train_delay_async("820", "8115","2024-11-21 11:48:37","2")
 
         await fetch_realtime_train_data()
 
@@ -217,7 +287,7 @@ async def main():
         # for doc in docs:
         #     print(doc)
 
-        await asyncio.sleep(10)  # 10초 대기
+        await asyncio.sleep(30)  # 10초 대기
         cnt += 1
         print(cnt)
 
