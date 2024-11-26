@@ -3,7 +3,7 @@ from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.server_api import ServerApi
 
-from pymongo import UpdateOne, UpdateMany
+from pymongo import UpdateOne, UpdateMany, DeleteMany
 # import aiohttp
 # import httpx
 import requests
@@ -20,6 +20,9 @@ SEOUL_API_KEY = os.getenv("SEOUL_API_KEY") # "53797461466e65723730665567764a"  #
 
 ONESIGNAL_URL = 'https://onesignal.com/api/v1/notifications'
 REALMETRO_BASE_URL = 'http://swopenapi.seoul.go.kr'
+
+# TRAIN_OFFSET_ARRIVAL = 25
+# TRAIN_OFFSET_WILL_ARRIVAL = 60
 # Set the Stable API version when creating a new client
 client = AsyncIOMotorClient(MONGODB_URI, server_api=ServerApi('1'))
 
@@ -109,11 +112,13 @@ async def fetch_realtime_train_data():
                 
             # MongoDB에 대량 요청 실행
             if len(operations) > 0:
-                result = await train_collection.delete_many({ "lastRecptnDt": { "$lt": today_formatted_date }})
-                print(f"today:{today_formatted_date} train:{trainNo} deleted: {result.deleted_count}")
+                operations.append(DeleteMany({"$expr": { "$eq": ["$statnId", "$statnTid"] }}))
+                # result = await train_collection.delete_many({ "lastRecptnDt": { "$lt": today_formatted_date }})
+                # result = await train_collection.delete_many({"$expr": { "$eq": ["$statnId", "$statnTid"] }})
+                # print(f"today:{today_formatted_date} train:{trainNo} deleted: {result.deleted_count}")
                 result = await train_collection.bulk_write(operations)
                 # result = await timetable_collection.bulk_write(operations)
-                print(f"{trainNo} train Inserted: {result.upserted_count}, Updated: {result.modified_count}")
+                print(f"{trainNo} train I: {result.upserted_count}, U: {result.modified_count} D: {result.deleted_count}")
 
             if len(timetable_opertions) > 0:
 
@@ -210,7 +215,7 @@ async def cal_train_delay_async(frCode, trainNo, recptnDt, train_stat):
             train_delay = train_delay_arrivetime + delay_offset
             print(f"train_stat:0 {train_delay_arrivetime} + {delay_offset} = {train_delay}")
         elif train_stat == "1" and train_delay_arrivetime:
-            delay_offset = 30
+            delay_offset = 25
             train_delay = train_delay_arrivetime + delay_offset
             print(f"train_stat:1 {train_delay_arrivetime} + {delay_offset} = {train_delay}")
         elif train_stat == "2" and train_delay_lefttime:
@@ -315,6 +320,10 @@ async def cal_time_diff_async(fr_code_value, updn):
 async def main():
     print("Starting async main...")
     # updn = "2"
+
+    result = await train_collection.delete_many({})
+    print(f"clear train_collection deleted: {result.deleted_count}")
+
     cnt = 0
     while cnt < 240: #2hours
 
@@ -322,12 +331,9 @@ async def main():
         # print(doc['ARRIVETIME'])
         # print(doc['LEFTTIME'])
         # await cal_train_delay_async("820", "8115","2024-11-21 11:48:37","2")
-
-        result = await train_collection.delete_many({})
-        print(f"clear train_collection deleted: {result.deleted_count}")
-
         await fetch_realtime_train_data()
-
+        cnt += 1
+        print(f"cnt:{cnt}")
         # for fr_code_value in fr_code_list:
         #     await cal_time_diff_async(fr_code_value, updn)
 
@@ -336,8 +342,6 @@ async def main():
         #     print(doc)
 
         await asyncio.sleep(30)  # 10초 대기
-        cnt += 1
-        print(cnt)
 
 
 asyncio.run(main())
