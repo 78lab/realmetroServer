@@ -3,7 +3,7 @@ from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.server_api import ServerApi
 
-from pymongo import UpdateOne
+from pymongo import UpdateOne, UpdateMany
 # import aiohttp
 # import httpx
 import requests
@@ -46,6 +46,11 @@ arrivalList = []
 
 
 
+# 오늘 날짜 가져오기
+today = datetime.now()
+today_formatted_date = today.strftime('%Y%m%d')
+print(f"today_formatted_date:{today_formatted_date}")
+
 # 외부 API로부터 데이터를 가져오는 함수
 async def fetch_realtime_train_data():
     global realtimePositions
@@ -56,9 +61,11 @@ async def fetch_realtime_train_data():
         print(response)
         if response.status_code == 200:
             data = response.json()
-            # print(f"API 호출 성공 ! data:{data}")
+            print(f"API 호출 성공 ! data len:{len(data['realtimePositionList'])}")
             # 중복 검사 및 데이터 삽입 또는 업데이트
             operations = []
+            timetable_opertions = []
+
             for item in data['realtimePositionList']:
                 trainNo = item['trainNo']
                 # statnTnm = item['statnTnm']
@@ -76,28 +83,42 @@ async def fetch_realtime_train_data():
                 train_delay = await cal_train_delay_async(frCode,trainNo,recptnDt,trainSttus)
                 print(f"trainNo:{trainNo} statnId:{statnId} FR_CODE:{frCode} train_delay:{train_delay} trainSttus:{trainSttus}")
 
-                filter_key = {
-                    "TRAIN_NO": trainNo
-                }
+                if train_delay:
+                    #trains updates
+                    filter_key = {
+                        "TRAIN_NO": trainNo
+                    }
 
-                item['TRAIN_NO'] = trainNo
-                item['delay'] = train_delay
-                
-                update_data = {"$set": item}
-                operations.append(UpdateOne(filter_key, update_data, upsert=True))
-                # filter_key = {
-                #     "TRAIN_NO": trainNo,
-                #     "FR_CODE": frCode,
-                # }
-                # update_data = {"$set": {'recptnDt':recptnDt,'trainSttus':trainSttus}}
-                # operations.append(UpdateOne(filter_key, update_data))
+                    item['TRAIN_NO'] = trainNo
+                    item['delay'] = train_delay
+                    
+                    update_data = {"$set": item}
+                    operations.append(UpdateOne(filter_key, update_data, upsert=True))
+
+                    #timetable updates    
+                    tt_filter_key = {
+                        "TRAIN_NO": trainNo
+                    }
+
+                    tt_update_data = {"$set": {'recptnDt':recptnDt,'trainSttus':trainSttus,'delay':train_delay}}
+                    timetable_opertions.append(UpdateMany(tt_filter_key, tt_update_data))
+
+                else:
+                    print(f"train_delay is none:{train_delay}")
+
                 
             # MongoDB에 대량 요청 실행
             if len(operations) > 0:
+                result = await train_collection.delete_many({ "lastRecptnDt": { "$lt": today_formatted_date }})
+                print(f"today:{today_formatted_date} train:{trainNo} deleted: {result.deleted_count}")
                 result = await train_collection.bulk_write(operations)
                 # result = await timetable_collection.bulk_write(operations)
-                print(f"{trainNo} Inserted: {result.upserted_count}, Updated: {result.modified_count}")
+                print(f"{trainNo} train Inserted: {result.upserted_count}, Updated: {result.modified_count}")
 
+            if len(timetable_opertions) > 0:
+
+                result = await timetable_collection.bulk_write(timetable_opertions)
+                print(f"{trainNo} timetable , Updated: {result.modified_count}")
 
             # if len(realtimePositions) == 0:
             #     realtimePositions = data['realtimePositionList']
@@ -138,40 +159,63 @@ async def fetch_realtime_train_data():
 
 async def cal_train_delay_async(frCode, trainNo, recptnDt, train_stat):
     print(f"\n\n\ncal_delay_async...frCode:{frCode} trainNo:{trainNo} recptnDt:{recptnDt} train_stat: {train_stat}") 
-    train_delay = 0
-    document = await find_timetable_async(frCode, trainNo)
 
+    train_delay_arrivetime = None
+    train_delay_lefttime = None
+
+    document = await find_timetable_async(frCode, trainNo)
 
     if document:
         print(f"ARRIVETIME: {document['ARRIVETIME']}, LEFTTIME: {document['LEFTTIME']}")
-        if document['ARRIVETIME'] == "00:00:00" or document['LEFTTIME'] == "00:00:00":
-            return None
+        # if document['ARRIVETIME'] == "00:00:00" or document['LEFTTIME'] == "00:00:00":
+        #     return None
+
 
         current_time = datetime.now().replace(microsecond=0)
         today = current_time.date()  # 오늘 날짜
+        print(f"현재 시간: {current_time} trainNo: {trainNo} train_stat: {train_stat}")
 
         recptntime = datetime.strptime(recptnDt, "%Y-%m-%d %H:%M:%S")
 
-        arrivetime = datetime.combine(today, datetime.strptime(document["ARRIVETIME"], "%H:%M:%S").time())
-        lefttime = datetime.combine(today, datetime.strptime(document["LEFTTIME"], "%H:%M:%S").time())
 
-        print(f"현재 시간: {current_time} trainNo: {trainNo} train_stat: {train_stat}")
-        arrivetime_diff = (arrivetime - current_time).total_seconds()
-        lefttime_diff = (lefttime - current_time).total_seconds()
+        if recptntime > current_time:
+            print(f"!!!! recptntime > current_time: {recptntime} > {current_time}")
+            return None  # 현재 시간보다 미래인 경우 None 반환 혹은 다른 처리 수행
 
-        train_delay_arrivetime = (recptntime - arrivetime).total_seconds()
-        train_delay_lefttime = (recptntime - lefttime).total_seconds()
-        print(f"train_delay arrivetime: {train_delay_arrivetime} lefttime: {train_delay_lefttime}")
-        print(f"curtime arrivetime: {arrivetime_diff} lefttime: {lefttime_diff}")
+        # 현재 시간과 비교하여 가장 가까운 시간을 찾아 차이를 계산
+        if document['ARRIVETIME'] != "00:00:00":
+            arrivetime = datetime.combine(today, datetime.strptime(document["ARRIVETIME"], "%H:%M:%S").time())
+            arrivetime_diff = (arrivetime - current_time).total_seconds()
+            train_delay_arrivetime = (recptntime - arrivetime).total_seconds()
+            print(f"arrivetime_diff:{arrivetime_diff} train_delay_arrivetime: {train_delay_arrivetime}")
 
-        if train_stat == "0":
-            # train_delay = train_delay_arrivetime + 60
-            print("train_stat 0 skip")
-        elif train_stat == "1":
-            train_delay = train_delay_arrivetime
-        elif train_stat == "2":
-            print("train_stat 2 skip")
-            # train_delay = train_delay_lefttime
+        if document['ARRIVETIME'] != "00:00:00":
+            arrivetime = datetime.combine(today, datetime.strptime(document["ARRIVETIME"], "%H:%M:%S").time())
+            arrivetime_diff = (arrivetime - current_time).total_seconds()
+            train_delay_arrivetime = (recptntime - arrivetime).total_seconds()
+            print(f"arrivetime_diff:{arrivetime_diff} train_delay_arrivetime: {train_delay_arrivetime}")
+
+        if document['LEFTTIME'] != "00:00:00":
+            lefttime = datetime.combine(today, datetime.strptime(document["LEFTTIME"], "%H:%M:%S").time())
+            lefttime_diff = (lefttime - current_time).total_seconds()
+            train_delay_lefttime = (recptntime - lefttime).total_seconds()
+            print(f"lefttime_diff:{lefttime_diff} train_delay_lefttime: {train_delay_lefttime}")
+
+
+        train_delay = 0
+        delay_offset = 0
+
+        if train_stat == "0" and train_delay_arrivetime:
+            delay_offset = 60
+            train_delay = train_delay_arrivetime + delay_offset
+            print(f"train_stat:0 {train_delay_arrivetime} + {delay_offset} = {train_delay}")
+        elif train_stat == "1" and train_delay_arrivetime:
+            delay_offset = 30
+            train_delay = train_delay_arrivetime + delay_offset
+            print(f"train_stat:1 {train_delay_arrivetime} + {delay_offset} = {train_delay}")
+        elif train_stat == "2" and train_delay_lefttime:
+            train_delay = train_delay_lefttime
+            print(f"train_stat:2 train_delay_lefttime = {train_delay}")
 
         # if arrivetime_diff > 0:
         #     a_minutes, a_seconds = divmod(int(arrivetime_diff), 60)
@@ -182,6 +226,7 @@ async def cal_train_delay_async(frCode, trainNo, recptnDt, train_stat):
     
         return train_delay
     else:
+        print(f"NO document!! cal_delay_async...frCode:{frCode} trainNo:{trainNo}")
         return None
 
 
@@ -271,12 +316,15 @@ async def main():
     print("Starting async main...")
     # updn = "2"
     cnt = 0
-    while cnt < 400:
+    while cnt < 240: #2hours
 
         # doc = await find_timetable_async("824", "8162")
         # print(doc['ARRIVETIME'])
         # print(doc['LEFTTIME'])
         # await cal_train_delay_async("820", "8115","2024-11-21 11:48:37","2")
+
+        result = await train_collection.delete_many({})
+        print(f"clear train_collection deleted: {result.deleted_count}")
 
         await fetch_realtime_train_data()
 
