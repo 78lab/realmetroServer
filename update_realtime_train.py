@@ -211,7 +211,7 @@ async def cal_train_delay_async(frCode, trainNo, recptnDt, train_stat):
         delay_offset = 0
 
         if train_stat == "0" and train_delay_arrivetime:
-            delay_offset = 60
+            delay_offset = 50
             train_delay = train_delay_arrivetime + delay_offset
             print(f"train_stat:0 {train_delay_arrivetime} + {delay_offset} = {train_delay}")
         elif train_stat == "1" and train_delay_arrivetime:

@@ -151,6 +151,19 @@ async def fetch_and_upsert(routeIds):
                 # XML에서 필요한 데이터 추출
                 item = root.find(".//busRouteInfoItem")
                 if item is not None:
+                    endMobileNo = item.find("endMobileNo")
+                    if endMobileNo is not None:
+                        endMobileNo = endMobileNo.text
+                    else:
+                        endMobileNo = ""
+
+                    startMobileNo = item.find("startMobileNo")
+                    if startMobileNo is not None:
+                        startMobileNo = startMobileNo.text
+                    else:
+                        startMobileNo = ""
+
+
                     document = {
                         "routeId": item.find("routeId").text,
                         "routeName": item.find("routeName").text,
@@ -160,10 +173,10 @@ async def fetch_and_upsert(routeIds):
                         "companyName": item.find("companyName").text,
                         "companyTel": item.find("companyTel").text,
                         "districtCd": item.find("districtCd").text,
-                        "startMobileNo": item.find("startMobileNo").text,
+                        "startMobileNo": startMobileNo,
                         "startStationId": item.find("startStationId").text,
                         "startStationName": item.find("startStationName").text,
-                        # "endMobileNo": item.find("endMobileNo").text,
+                        "endMobileNo": endMobileNo,
                         "endStationId": item.find("endStationId").text,
                         "endStationName": item.find("endStationName").text,
                         "upFirstTime": item.find("upFirstTime").text,
@@ -273,18 +286,31 @@ async def send_bulk_messages():
         await asyncio.gather(*tasks)
         tag_messages = []
 
-
+# stationList = ['222000182',
+# '222000199',
+# '222000200',
+# '221000041',
+# '241005890',
+# '241347007',
+# '241347009',
+# '241347010',
+# '241350003',
+# '241347002']
 # 예제 사용
 async def main():
-    stationId = "222001901"  # 조회할 stationId
+
+    # for stationId in stationList:
+    #     await upsert_routes_for_station(stationId)
+    stationId = "222001539"  # 조회할 stationId
     print(f"stationId: {stationId}")
-    cnt = 0
-    while cnt < 100:
-        await upsert_routes_for_station(stationId)
-        await send_bulk_messages()
-        print(f"cnt: {cnt}")
-        cnt += 1
-        await asyncio.sleep(30)  # 30초 대기
+    await upsert_routes_for_station(stationId)
+    # cnt = 0
+    # while cnt < 100:
+    #     await upsert_routes_for_station(stationId)
+    #     await send_bulk_messages()
+    #     print(f"cnt: {cnt}")
+    #     cnt += 1
+    #     await asyncio.sleep(30)  # 30초 대기
 
 # 이벤트 루프 실행
 asyncio.run(main())

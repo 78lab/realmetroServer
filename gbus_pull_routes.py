@@ -32,7 +32,8 @@ client = AsyncIOMotorClient(MONGODB_URI, server_api=ServerApi('1'))
 
 # client = motor.motor_asyncio.AsyncIOMotorClient('mongodb://localhost:27017/')
 db = client['test']  # 데이터베이스 이름
-collection = db['busarrivals']  # 컬렉션 이름
+# collection = db['busarrivals']  # 컬렉션 이름
+bus_route_collection = db['busrouteinfos']  # 컬렉션 이름
 BUS_BASE_URL = "https://apis.data.go.kr/6410000"
 BUS_ARRIVAL_URL = BUS_BASE_URL + "/busarrivalservice/getBusArrivalList?serviceKey={}&stationId={}"
 BUS_ROUTE_INFO_URL = BUS_BASE_URL+ "/busrouteservice/getBusRouteInfoItem?serviceKey={}&routeId={}"
@@ -105,13 +106,28 @@ async def upsert_routes(stationId):
     # MongoDB에 bulk upsert 수행
     if operations:
         print(f"operations:{operations} Upserting {len(operations)} documents for stationId {stationId}")
-        # result = await collection.bulk_write(operations)
-        # print(f"Upserted {result.upserted_count} and updated {result.modified_count} documents for stationId {stationId}")
+        result = await bus_route_collection.bulk_write(operations)
+        print(f"bus_route_collection US: {result.upserted_count} and U: {result.modified_count} for stationId: {stationId}")
+
+
+stationList = ['222000182',
+'222000199',
+'222000200',
+'221000041',
+'241005890',
+'241347007',
+'241347009',
+'241347010',
+'241350003',
+'241347002']
 
 # 예제 사용
 async def main():
-    stationId = "222001901"  # 조회할 stationId
-    await upsert_routes(stationId)
+    # stationId = "222001901"  # 조회할 stationId
+
+    for stationId in stationList:
+        await upsert_routes(stationId)
 
 # 이벤트 루프 실행
 asyncio.run(main())
+print("gbus pull station info :Done")
