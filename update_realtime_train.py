@@ -69,13 +69,18 @@ async def fetch_realtime_train_data(subwayName, weekTag):
             operations = []
             timetable_opertions = []
 
+            cnt = 0
+
             for item in data['realtimePositionList']:
+                cnt += 1
+                # print(f"item:{item}")
+
                 trainNo = item['trainNo']
                 # statnTnm = item['statnTnm']
                 statnId = item['statnId']
                 #1-9호선 뒤 3자리 코드
                 frCode = statnId[7:10]
-                # statnNm = item['statnNm']
+                statnNm = item['statnNm']
                 recptnDt = item['recptnDt']
                 # updnLine = item['updnLine']
                 trainSttus = item['trainSttus']
@@ -83,16 +88,16 @@ async def fetch_realtime_train_data(subwayName, weekTag):
                 # lstcarAt = item['lstcarAt']
                 
 
-                train_delay = await cal_train_delay_async(frCode,trainNo, weekTag,recptnDt,trainSttus)
-                print(f"trainNo:{trainNo} statnId:{statnId} FR_CODE:{frCode} train_delay:{train_delay} trainSttus:{trainSttus}")
+                train_delay,tt_train_no = await cal_train_delay_async(frCode,trainNo, weekTag,recptnDt,trainSttus)
+                print(f"{cnt}: train_delay:{train_delay} tt_train_no:{tt_train_no} statnId:{statnId} FR_CODE:{frCode}  trainSttus:{trainSttus}")
 
                 if train_delay:
                     #trains updates
                     filter_key = {
-                        "TRAIN_NO": trainNo
+                        "TRAIN_NO": tt_train_no
                     }
 
-                    item['TRAIN_NO'] = trainNo
+                    item['TRAIN_NO'] = tt_train_no
                     item['delay'] = train_delay
                     
                     update_data = {"$set": item}
@@ -100,12 +105,12 @@ async def fetch_realtime_train_data(subwayName, weekTag):
 
                     #timetable updates    
                     tt_filter_key = {
-                        "TRAIN_NO": trainNo,
+                        "TRAIN_NO": tt_train_no,
                         "FR_CODE": frCode,
                         "WEEK_TAG": weekTag
                     }
 
-                    tt_update_data = {"$set": {'recptnDt':recptnDt,'trainSttus':trainSttus,'delay':train_delay}}
+                    tt_update_data = {"$set": {'statnId':statnId, 'statnNm':statnNm, 'recptnDt':recptnDt,'trainSttus':trainSttus,'delay':train_delay}}
                     timetable_opertions.append(UpdateOne(tt_filter_key, tt_update_data))
 
                 else:
@@ -173,14 +178,15 @@ async def cal_train_delay_async(frCode, trainNo, weekTag, recptnDt, train_stat):
     document = await find_timetable_async(frCode, trainNo,weekTag)
 
     if document:
-        print(f"ARRIVETIME: {document['ARRIVETIME']}, LEFTTIME: {document['LEFTTIME']}")
+        print(f"document:{document['TRAIN_NO']}")
+        # print(f"ARRIVETIME: {document['ARRIVETIME']}, LEFTTIME: {document['LEFTTIME']}")
         # if document['ARRIVETIME'] == "00:00:00" or document['LEFTTIME'] == "00:00:00":
         #     return None
 
 
         current_time = datetime.now().replace(microsecond=0)
         today = current_time.date()  # 오늘 날짜
-        print(f"현재 시간: {current_time} trainNo: {trainNo} train_stat: {train_stat}")
+        print(f"현재 시간: {current_time} trainNo: {trainNo} train_stat: {train_stat} A:{document['ARRIVETIME']} L:{document['LEFTTIME']}")
 
         recptntime = datetime.strptime(recptnDt, "%Y-%m-%d %H:%M:%S")
 
@@ -223,6 +229,9 @@ async def cal_train_delay_async(frCode, trainNo, weekTag, recptnDt, train_stat):
         elif train_stat == "2" and train_delay_lefttime:
             train_delay = train_delay_lefttime
             print(f"train_stat:2 train_delay_lefttime = {train_delay}")
+        else:
+            print(f"!! train_stat:{train_stat} ARRIVETIME:{document['ARRIVETIME']} LEFTTIME:{document['LEFTTIME']}")
+ 
 
         # if arrivetime_diff > 0:
         #     a_minutes, a_seconds = divmod(int(arrivetime_diff), 60)
@@ -231,16 +240,17 @@ async def cal_train_delay_async(frCode, trainNo, weekTag, recptnDt, train_stat):
         #     l_minutes, l_seconds = divmod(int(lefttime_diff), 60)
         #     print(f"{inout_tag}:{fr_code_value} {train_no}열차 {l_seconds}초 후 출발")
     
-        return train_delay
+        return train_delay, document['TRAIN_NO']
     else:
         print(f"NO document!! cal_delay_async...frCode:{frCode} trainNo:{trainNo}")
-        return None
+        return None,None
 
 
 
 async def find_timetable_async(frCode, trainNo, weekTag):
-    # current_time = datetime.now().strftime("%H:%M:%S")
-    query = { "FR_CODE": frCode, "TRAIN_NO": trainNo, "WEEK_TAG": weekTag }
+    # current_time = datetime.now().strftime("%H:%M:%S") {"$regex": "^3266"}
+    # query = { "FR_CODE": frCode, "TRAIN_NO": trainNo, "WEEK_TAG": weekTag }
+    query = { "FR_CODE": frCode, "TRAIN_NO": {"$regex": "^"+trainNo}, "WEEK_TAG": weekTag }
     print(query)
     result = await timetable_collection.find_one(query)
     return result
@@ -345,14 +355,11 @@ async def main():
     while True:
     # while cnt < 2400: #10hours
         # 현재 시간 가져오기
-        if current_time.hour == 2 and current_time.minute == 0:
-            print(f"AM {current_time.hour}:{current_time.minute} exit")
-            break
-
         # doc = await find_timetable_async("824", "8162")
         # print(doc['ARRIVETIME'])
         # print(doc['LEFTTIME'])
         # await cal_train_delay_async("820", "8115","2024-11-21 11:48:37","2")
+        await fetch_realtime_train_data("3호선",weekTag)
         await fetch_realtime_train_data("7호선",weekTag)
         await fetch_realtime_train_data("8호선",weekTag)
         cnt += 1
@@ -363,8 +370,14 @@ async def main():
         # docs = await find_arrivals_by_updn_async("1")
         # for doc in docs:
         #     print(doc)ß
+        cur_time = datetime.now()
+        print(f"cur_time:{cur_time.hour}:{cur_time.minute} ...")
+        if cur_time.hour == 2: #and cur_time.minute == 13
+            print(f"cur_time: {cur_time.hour}:{cur_time.minute} exit.")
+            break
 
-        await asyncio.sleep(20)  # 20초 대기
+        await asyncio.sleep(15)  # 15초 대기
 
 
 asyncio.run(main())
+print("main end.")
