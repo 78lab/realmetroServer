@@ -193,7 +193,7 @@ async def cal_train_delay_async(frCode, trainNo, weekTag, recptnDt, train_stat):
 
         if recptntime > current_time:
             print(f"!!!! recptntime > current_time: {recptntime} > {current_time}")
-            return None  # 현재 시간보다 미래인 경우 None 반환 혹은 다른 처리 수행
+            return None,None  # 현재 시간보다 미래인 경우 None 반환 혹은 다른 처리 수행
 
         # 현재 시간과 비교하여 가장 가까운 시간을 찾아 차이를 계산
         # if document['ARRIVETIME'] != "00:00:00":
@@ -250,7 +250,7 @@ async def cal_train_delay_async(frCode, trainNo, weekTag, recptnDt, train_stat):
 async def find_timetable_async(frCode, trainNo, weekTag):
     # current_time = datetime.now().strftime("%H:%M:%S") {"$regex": "^3266"}
     # query = { "FR_CODE": frCode, "TRAIN_NO": trainNo, "WEEK_TAG": weekTag }
-    query = { "FR_CODE": frCode, "TRAIN_NO": {"$regex": "^"+trainNo}, "WEEK_TAG": weekTag }
+    query = { "FR_CODE": frCode, "TRAIN_NO": {"$regex": trainNo}, "WEEK_TAG": weekTag }
     print(query)
     result = await timetable_collection.find_one(query)
     return result
@@ -359,7 +359,9 @@ async def main():
         # print(doc['ARRIVETIME'])
         # print(doc['LEFTTIME'])
         # await cal_train_delay_async("820", "8115","2024-11-21 11:48:37","2")
+        
         await fetch_realtime_train_data("3호선",weekTag)
+        await fetch_realtime_train_data("4호선",weekTag)
         await fetch_realtime_train_data("7호선",weekTag)
         await fetch_realtime_train_data("8호선",weekTag)
         cnt += 1
@@ -376,7 +378,7 @@ async def main():
             print(f"cur_time: {cur_time.hour}:{cur_time.minute} exit.")
             break
 
-        await asyncio.sleep(15)  # 15초 대기
+        await asyncio.sleep(5)  # 5초 대기
 
 
 asyncio.run(main())
