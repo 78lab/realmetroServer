@@ -13,11 +13,13 @@ import os
 # .env 파일 로드
 load_dotenv()
 
+PUB_DATA_API_KEY = os.getenv("PUB_DATA_API_KEY")
 MONGODB_URI = os.getenv("MONGODB_URI")
 ONESIGNAL_APP_ID = os.getenv("ONESIGNAL_APP_ID") # '6799258c-2608-40ae-ae58-9ab570921e4b'
 ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY") # 'MDc5YzU2ZmQtODY3Zi00YjMwLThmODgtNDg3OGQ1NTllN2Rj'
 SEOUL_API_KEY = os.getenv("SEOUL_API_KEY") # "53797461466e65723730665567764a"  #'486a4d6c796e6572383276786c626a'
 
+PUB_DATA_BASE_URL = 'http://apis.data.go.kr'
 ONESIGNAL_URL = 'https://onesignal.com/api/v1/notifications'
 REALMETRO_BASE_URL = 'http://swopenapi.seoul.go.kr'
 
@@ -53,6 +55,18 @@ arrivalList = []
 today = datetime.now()
 today_formatted_date = today.strftime('%Y%m%d')
 print(f"today_formatted_date:{today_formatted_date}")
+
+async def get_rest_days():
+    # 공휴일 API URL
+    HOLIDAY_API_URL = f"{PUB_DATA_BASE_URL}/getRestDeInfo?serviceKey={PUB_DATA_API_KEY}&solYear={today.year}&solMonth={today.month}"
+    print(f"HOLIDAY_API_URL:{HOLIDAY_API_URL}")
+    response = requests.get(HOLIDAY_API_URL)
+    if response.status_code == 200:
+        data = response.json()
+        rest_days = [item['locdate'] for item in data['response']['body']['items']['item']]
+        return rest_days
+    else:
+        return []
 
 # 외부 API로부터 데이터를 가져오는 함수
 async def fetch_realtime_train_data(subwayName, weekTag):
@@ -333,24 +347,30 @@ async def main():
     print("Starting async main...")
     # updn = "2"
 
+
     result = await train_collection.delete_many({})
     print(f"clear train_collection deleted: {result.deleted_count}")
 
-    weekTag = "1"
 
     cnt = 0
 
+    weekTag = "1"
     current_time = datetime.now()   
     weekday = current_time.weekday()
-    # 요일 확인 (0:월요일 ~ 6:일요일)
-    if weekday < 5:
-        weekTag = "1"
+   
+    restdays = await get_rest_days()
+    print(f"restdays:{restdays} today_formatted_date:{today_formatted_date}")
+    if today_formatted_date in restdays or weekday == 6:
+        weekTag = "3"
     elif weekday == 5:
         weekTag = "2"
     else:
-        weekTag = "3"
+        weekTag = "1"
+
+     # 요일 확인 (0:월요일 ~ 6:일요일)
     print(f"weekTag: {weekTag}")
 
+    # exit()
 
     while True:
     # while cnt < 2400: #10hours
